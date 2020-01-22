@@ -1,7 +1,8 @@
-{% set data = pillar.cluster.configure.template.parameters %}
-{% set sid = data.sid.upper() %}
-{% set instance = '{:0>2}'.format(data.instance) %}
-{% set cloud_provider = grains['cloud_provider'] %}
+{%- set data = pillar.cluster.configure.template.parameters %}
+{%- set sid = data.sid.upper() %}
+{%- set instance = '{:0>2}'.format(data.instance) %}
+{%- set cloud_provider = grains['cloud_provider'] %}
+{%- set host = grains['host'] %}
 
 #
 # defaults
@@ -18,7 +19,7 @@ op_defaults \
 # production HANA
 #
 
-{% set nic = "nic="~pillar.cluster.interface|default('eth0')|json if cloud_provider == "google-cloud-platform" else "nic="~pillar.cluster.interface|json if pillar.cluster.interface is defined else "" %}
+{%- set nic = "nic="~pillar.cluster.interface|default('eth0')|json if cloud_provider == "google-cloud-platform" else "nic="~pillar.cluster.interface|json if pillar.cluster.interface is defined else "" %}
 
 primitive rsc_ip_{{ sid }}_HDB{{ instance }} ocf:heartbeat:IPaddr2 \
     params \
@@ -53,7 +54,7 @@ primitive rsc_SAPHana_{{ sid }}_HDB{{ instance }} ocf:suse:SAPHana \
 ms msl_SAPHana_{{ sid }}_HDB{{ instance }} rsc_SAPHana_{{ sid }}_HDB{{ instance }} \
     meta clone-max="2" clone-node-max="1" interleave="true"
 
-{% if cloud_provider == "microsoft-azure" %}
+{%- if cloud_provider == "microsoft-azure" %}
 
 primitive rsc_socat_{{ sid }}_HDB{{ instance }} anything \
   params binfile="/usr/bin/socat" cmdline_options="-U TCP-LISTEN:625{{ instance }},backlog=10,fork,reuseaddr /dev/null" \
@@ -63,18 +64,18 @@ group g_ip_{{ sid }}_HDB{{ instance }} rsc_ip_{{ sid }}_HDB{{ instance }} rsc_so
 
 colocation col_saphana_ip_{{ sid }}_HDB{{ instance }} 2000: g_ip_{{ sid }}_HDB{{ instance }}:Started msl_SAPHana_{{ sid }}_HDB{{ instance }}:Master
 
-{% else %}
+{%- else %}
 
 colocation col_saphana_ip_{{ sid }}_HDB{{ instance }} 2000: rsc_ip_{{ sid }}_HDB{{ instance }}:Started msl_SAPHana_{{ sid }}_HDB{{ instance }}:Master
 
-{% endif %}
+{%- endif %}
 
 order ord_SAPHana_{{ sid }}_HDB{{ instance }} Optional: cln_SAPHanaTopology_{{ sid }}_HDB{{ instance }} msl_SAPHana_{{ sid }}_HDB{{ instance }}
 
-{% if data.cost_optimized_parameters is defined %}
-{% set qas_sid = data.cost_optimized_parameters.sid.upper() %}
-{% set qas_instance = '{:0>2}'.format(data.cost_optimized_parameters.instance) %}
-{% set qas_remote_host = data.cost_optimized_parameters.remote_host %}
+{%- if data.cost_optimized_parameters is defined %}
+{%- set qas_sid = data.cost_optimized_parameters.sid.upper() %}
+{%- set qas_instance = '{:0>2}'.format(data.cost_optimized_parameters.instance) %}
+{%- set qas_remote_host = data.cost_optimized_parameters.remote_host %}
 
 #
 # non-production HANA
@@ -96,4 +97,12 @@ colocation col_{{ qas_sid }}_never_with_{{ sid }}-ip -inf: rsc_SAP_{{ qas_sid }}
 order ord_{{ qas_sid }}_stop_before_{{ sid }}-promote Mandatory: rsc_SAP_{{ qas_sid }}_HDB{{ qas_instance }}:stop \
  msl_SAPHana_{{ sid }}_HDB{{ instance }}:promote
 
-{% endif %}
+{%- endif %}
+
+# gcp fencing agents. Each agent will be create when the nodes join the cluster (during initialization or join)
+
+{%- if cloud_provider == "google-cloud-platform" and data.use_fence_gce is defined and data.use_fence_gce is sameas true %}
+primitive stonith-gce-{{ host }} stonith:fence_gce \
+        params action=reboot plug={{ host }} pcmk_host_map="{{ host }}:{{ host }}" \
+        meta target-role=Started
+{%- endif %}
